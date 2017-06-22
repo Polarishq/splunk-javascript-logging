@@ -1,3 +1,5 @@
+/*jslint node: true */
+'use strict';
 /*
  * Copyright 2015 Splunk, Inc.
  *
@@ -137,9 +139,8 @@ SplunkLogger.prototype.levels = {
 var defaultConfig = {
     name: "splunk-javascript-logging/0.9.3",
     host: "localhost",
-    path: "/services/collector/event/1.0",
+    path: "/v1/events",
     protocol: "https",
-    port: 8088,
     level: SplunkLogger.prototype.levels.INFO,
     maxRetries: 0,
     batchInterval: 0,
@@ -231,9 +232,6 @@ SplunkLogger.prototype._initializeConfig = function(config) {
             if (parsed.protocol) {
                 config.protocol = parsed.protocol.replace(":", "");
             }
-            if (parsed.port) {
-                config.port = parsed.port;
-            }
             if (parsed.hostname && parsed.path) {
                 config.host = parsed.hostname;
                 if (pathIsNotSlash) {
@@ -247,18 +245,14 @@ SplunkLogger.prototype._initializeConfig = function(config) {
         }
 
         // Take the argument's value, then instance value, then the default value
-        ret.token = utils.orByProp("token", config, ret);
+        ret.clientId = utils.orByProp("clientId", config, ret);
+        ret.clientSecret = utils.orByProp("clientSecret", config, ret);
         ret.name = utils.orByProp("name", config, ret, defaultConfig);
         ret.level = utils.orByProp("level", config, ret, defaultConfig);
 
         ret.host = utils.orByProp("host", config, ret, defaultConfig);
         ret.path = utils.orByProp("path", config, ret, defaultConfig);
         ret.protocol = utils.orByProp("protocol", config, ret, defaultConfig);
-        ret.port = utils.orByFalseyProp("port", config, ret, defaultConfig);
-        ret.port = utils.validateNonNegativeInt(ret.port, "Port");
-        if (ret.port < 1 || ret.port > 65535) {
-            throw new Error("Port must be an integer between 1 and 65535, found: " + ret.port);
-        }
 
         ret.maxRetries = utils.orByProp("maxRetries", config, ret, defaultConfig);
         ret.maxRetries = utils.validateNonNegativeInt(ret.maxRetries, "Max retries");
@@ -337,17 +331,11 @@ SplunkLogger.prototype._initializeMetadata = function(context) {
         if (context.metadata.hasOwnProperty("time")) {
             metadata.time = context.metadata.time;
         }
-        if (context.metadata.hasOwnProperty("host")) {
-            metadata.host = context.metadata.host;
+        if (context.metadata.hasOwnProperty("entity")) {
+            metadata.entity = context.metadata.entity;
         }
         if (context.metadata.hasOwnProperty("source")) {
             metadata.source = context.metadata.source;
-        }
-        if (context.metadata.hasOwnProperty("sourcetype")) {
-            metadata.sourcetype = context.metadata.sourcetype;
-        }
-        if (context.metadata.hasOwnProperty("index")) {
-            metadata.index = context.metadata.index;
         }
     }
     return metadata;
@@ -398,7 +386,7 @@ SplunkLogger.prototype._makeBody = function(context) {
     var time = utils.formatTime(body.time || Date.now());
     body.time = time.toString();
     
-    body.event = this.eventFormatter(context.message, context.severity || defaultConfig.level);
+    body.raw = this.eventFormatter(context.message, context.severity || defaultConfig.level);
     return body;
 };
 
@@ -433,7 +421,8 @@ SplunkLogger.prototype._sendEvents = function(context, callback) {
     // Manually set the content-type header, the default is application/json
     // since json is set to true.
     requestOptions.headers["Content-Type"] = "application/x-www-form-urlencoded";
-    requestOptions.url = this.config.protocol + "://" + this.config.host + ":" + this.config.port + this.config.path;
+    requestOptions.headers["Content-Type"] = "Authorization: Basic " + btoa(this.config.clientId + ":" + this.config.clientSecret);
+    requestOptions.url = this.config.protocol + "://" + this.config.host + this.config.path;
 
     // Initialize the context again, right before using it
     context = this._initializeContext(context);
@@ -507,7 +496,8 @@ SplunkLogger.prototype._sendEvents = function(context, callback) {
  * @example
  * var SplunkLogger = require("splunk-logging").Logger;
  * var config = {
- *     token: "your-token-here"
+ *     clientId: "your client id here",
+ *     clientSecret: "your clientSecret here"
  * }; 
  * 
  * var logger = new SplunkLogger(config);
@@ -521,9 +511,7 @@ SplunkLogger.prototype._sendEvents = function(context, callback) {
  *     severity: "info",
  *     metadata: {
  *         source: "chicken coop",
- *         sourcetype: "httpevent",
- *         index: "main",
- *         host: "farm.local",
+ *         entity: "farm.local",
  *     }
  * }; 
  *
@@ -541,11 +529,9 @@ SplunkLogger.prototype._sendEvents = function(context, callback) {
  * @param {(object|string|Array|number|bool)} context.message - Data to send to Splunk.
  * @param {string} [context.severity=info] - Severity level of this event.
  * @param {object} [context.metadata] - Metadata for this event.
- * @param {string} [context.metadata.host] - If not specified, Splunk Enterprise or Splunk Cloud will decide the value.
- * @param {string} [context.metadata.index] - The Splunk Enterprise or Splunk Cloud index to send data to.
+ * @param {string} [context.metadata.entity] - If not specified, Splunk Enterprise or Splunk Cloud will decide the value.
  * If not specified, Splunk Enterprise or Splunk Cloud will decide the value.
  * @param {string} [context.metadata.source] - If not specified, Splunk Enterprise or Splunk Cloud will decide the value.
- * @param {string} [context.metadata.sourcetype] - If not specified, Splunk Enterprise or Splunk Cloud will decide the value.
  * @param {function} [callback] - A callback function: <code>function(err, response, body)</code>.
  * @throws Will throw an error if the <code>context</code> parameter is malformed.
  * @public
